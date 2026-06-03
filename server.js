@@ -1,41 +1,105 @@
-import express from "express";
-import axios from "axios";
-import connectDB from "./utils/db.js";
-import dotenv from "dotenv";
+import express from 'express';
+import cors from 'cors';
+import dotenv from 'dotenv';
+import mongoose from 'mongoose';
+
+// Load environmental variables
 dotenv.config();
 
-const PORT = 3000;
+// Import routes
+import authRoutes from './routes/auth.js';
+import userRoutes from './routes/users.js';
+import projectRoutes from './routes/projects.js';
+import issueRoutes from './routes/issues.js';
+import commentRoutes from './routes/comments.js';
+import analyticsRoutes from './routes/analytics.js';
+import syncRoutes from './routes/sync.js';
+
+// Import User model for health check count
+import User from './models/User.js';
+
 const app = express();
-const apiBaseUrl = process.env.API_BASE_URL || "https://t4e-testserver.onrender.com/api";
 
+// Standard middleware
+app.use(cors());
 app.use(express.json());
+app.use(express.urlencoded({ extended: true }));
 
-let dataset = [];
+// GET /health
+app.get('/health', async (req, res) => {
+  try {
+    const isConnected = mongoose.connection.readyState === 1;
+    if (!isConnected) {
+      return res.status(500).json({
+        success: false,
+        message: 'Database connection failed',
+        data: { database: 'disconnected' },
+      });
+    }
+
+    const userCount = await User.countDocuments();
+    return res.status(200).json({
+      success: true,
+      message: 'Database connected successfully',
+      data: {
+        database: 'connected',
+        documentCount: userCount,
+      },
+    });
+  } catch (error) {
+    return res.status(500).json({
+      success: false,
+      message: error.message,
+    });
+  }
+});
+
+// Register routes
+app.use('/api/auth', authRoutes);
+app.use('/api/users', userRoutes);
+app.use('/api/projects', projectRoutes);
+app.use('/api/issues', issueRoutes);
+app.use('/api/comments', commentRoutes);
+app.use('/api/analytics', analyticsRoutes);
+app.use('/api/sync', syncRoutes);
+
+// Catch-all 404 handler
+app.use((req, res, next) => {
+  res.status(404).json({
+    success: false,
+    message: `Not Found — ${req.originalUrl}`,
+  });
+});
+
+// Global error handler
+app.use((err, req, res, next) => {
+  const statusCode = res.statusCode === 200 ? 500 : res.statusCode;
+  res.status(statusCode).json({
+    success: false,
+    message: err.message || 'Internal Server Error',
+  });
+});
+
+const PORT = process.env.PORT || 3000;
+const MONGO_URI = process.env.MONGO_URI;
 
 const startServer = async () => {
   try {
-    const response = await axios.post(`${apiBaseUrl}/public/token`, {
-        studentId: process.env.STUDENT_ID,
-        password: process.env.STUDENT_PASSWORD,
-        set: process.env.STUDENT_SET,
-    });
-    const { token, dataUrl } = response.data;
-    const dataResponse = await axios.get(`${apiBaseUrl}${dataUrl}`, {
-        headers: { Authorization: `Bearer ${token}` },
-    });
-    dataset = dataResponse.data;
-    console.log("Dataset B loaded successfully");
+    if (!MONGO_URI) {
+      console.error('MONGO_URI is missing from environment variables');
+      process.exit(1);
+    }
+    
+    await mongoose.connect(MONGO_URI);
+    console.log('Successfully connected to MongoDB');
+
     app.listen(PORT, () => {
-      connectDB();
-      console.log(`Student SET B running on port ${PORT}`);
+      console.log(`Server is running on port ${PORT}`);
     });
-  } catch (err) {
-    console.log("Error loading data:", err.message);
+  } catch (error) {
+    console.error('Database connection failed:', error.message);
+    process.exit(1);
   }
 };
 
 startServer();
-
-app.use('/dataset', (req, res) => {
-    res.json(dataset);
-});
